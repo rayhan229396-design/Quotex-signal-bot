@@ -6,10 +6,23 @@ import pytz
 app = Flask(__name__)
 
 CURRENCY_PAIRS = [
+    # --- Quotex Major Live Pairs ---
+    "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", 
+    "USD/CHF", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", 
+    "AUD/JPY", "EUR/CAD", "GBP/CAD", "EUR/AUD", "AUD/CAD",
+    "CHF/JPY", "CAD/JPY", "EUR/CHF", "GBP/CHF", "AUD/NZD",
+    
+    # --- Quotex OTC Pairs ---
     "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/BDT (OTC)", "USD/INR (OTC)",
     "AUD/CAD (OTC)", "EUR/JPY (OTC)", "GBP/JPY (OTC)", "USD/JPY (OTC)",
-    "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD"
+    "USD/PKR (OTC)", "USD/EGP (OTC)", "USD/BRL (OTC)", "USD/TRY (OTC)",
+    "USD/NGN (OTC)", "USD/PHP (OTC)", "USD/IDR (OTC)",
+    
+    # --- Commodities & Crypto ---
+    "Crypto IDX", "Bitcoin (BTC/USD)", "Ethereum (ETH/USD)", 
+    "Gold (XAU/USD)", "Silver (XAG/USD)", "USCrude (Oil)"
 ]
+
 
 HTML_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
