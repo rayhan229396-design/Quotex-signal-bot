@@ -14,13 +14,16 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
 app = Flask(__name__)
 
-# 🔑 API Keys
-GEMINI_API_KEY = "AQ.Ab8RN6KwuimLIB6Pgr3J6AcTmvEQl67nA2nVqjRwspe8Up4PVQ"
-TELEGRAM_BOT_TOKEN = "8790700892:AAHEY-R__HoauY2ftvYL_aWgWWfcQdOPgTw"
+# API Keys Configuration
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6KwuimLIB6Pgr3J6AcTmvEQl67nA2nVqjRwspe8Up4PVQ")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8790700892:AAHEY-R__HoauY2ftvYL_aWgWWfcQdOPgTw")
 
 # Configure Gemini AI
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+try:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except Exception as e:
+    print(f"Gemini Init Error: {e}")
 
 # Web Dashboard Currency Pairs
 CURRENCY_PAIRS = [
