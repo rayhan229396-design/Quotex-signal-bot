@@ -1,17 +1,14 @@
 from flask import Flask, jsonify, request, render_template_string
 from datetime import datetime, timedelta
 import pytz
-from tradingview_ta import TA_Handler, Interval, Exchange
+from tradingview_ta import TA_Handler, Interval
 
 app = Flask(__name__)
 
-# TradingView-তে কাজ করে এমন প্রধান কারেন্সি, ক্রিপ্টো ও কমোডিটি পেয়ারসমূহ
 CURRENCY_PAIRS = [
-    # Forex / Live Pairs
     "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
     "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", 
     "AUDJPY", "EURCAD", "GBPCAD", "EURAUD", "AUDCAD",
-    # Crypto & Commodities
     "BTCUSD", "ETHUSD", "XAUUSD", "XAGUSD"
 ]
 
@@ -100,13 +97,13 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             });
             const data = await response.json();
             loader.style.display = 'none';
-            resultBox.style.display = 'block';
 
             if(data.error) {
-                alert('Error fetching TradingView data for ' + pair);
+                alert('TradingView Error: ' + data.error);
                 return;
             }
 
+            resultBox.style.display = 'block';
             document.getElementById('resPair').innerText = data.pair;
             document.getElementById('resTime').innerText = data.entry_time;
             document.getElementById('resRsi').innerText = data.rsi;
@@ -136,56 +133,76 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 </html>'''
 
 def fetch_tradingview_analysis(symbol, timeframe):
-    try:
-        tf_map = {
-            "1m": Interval.INTERVAL_1_MINUTE,
-            "5m": Interval.INTERVAL_5_MINUTES,
-            "15m": Interval.INTERVAL_15_MINUTES
-        }
-        
-        screener = "crypto" if symbol in ["BTCUSD", "ETHUSD"] else "forex"
-        exchange = "BINANCE" if symbol in ["BTCUSD", "ETHUSD"] else "FX_IDC"
+    tf_map = {
+        "1m": Interval.INTERVAL_1_MINUTE,
+        "5m": Interval.INTERVAL_5_MINUTES,
+        "15m": Interval.INTERVAL_15_MINUTES
+    }
+    
+    # Try different configurations if first fails
+    configs = []
+    if symbol in ["BTCUSD", "ETHUSD"]:
+        configs.append({"screener": "crypto", "exchange": "BINANCE"})
+        configs.append({"screener": "crypto", "exchange": "BITSTAMP"})
+    elif symbol in ["XAUUSD", "XAGUSD"]:
+        configs.append({"screener": "forex", "exchange": "OANDA"})
+        configs.append({"screener": "cfd", "exchange": "TVC"})
+    else:
+        configs.append({"screener": "forex", "exchange": "FX_IDC"})
+        configs.append({"screener": "forex", "exchange": "OANDA"})
+        configs.append({"screener": "forex", "exchange": "FOREXCOM"})
 
-        handler = TA_Handler(
-            symbol=symbol,
-            exchange=exchange,
-            screener=screener,
-            interval=tf_map.get(timeframe, Interval.INTERVAL_1_MINUTE)
-        )
-        
-        analysis = handler.get_analysis()
-        summary = analysis.summary
-        indicators = analysis.indicators
+    analysis = None
+    last_err = ""
 
-        tv_rec = summary.get("RECOMMENDATION", "NEUTRAL")
-        buy_votes = summary.get("BUY", 0)
-        sell_votes = summary.get("SELL", 0)
-        rsi_val = round(indicators.get("RSI", 50), 2)
+    for cfg in configs:
+        try:
+            handler = TA_Handler(
+                symbol=symbol,
+                exchange=cfg["exchange"],
+                screener=cfg["screener"],
+                interval=tf_map.get(timeframe, Interval.INTERVAL_1_MINUTE)
+            )
+            analysis = handler.get_analysis()
+            if analysis:
+                break
+        except Exception as e:
+            last_err = str(e)
+            continue
 
-        if "BUY" in tv_rec:
-            direction = "CALL"
-        elif "SELL" in tv_rec:
-            direction = "PUT"
-        else:
-            direction = "WAIT"
+    if not analysis:
+        return {"error": f"Data not found for {symbol}. ({last_err})"}
 
-        bd_tz = pytz.timezone('Asia/Dhaka')
-        now = datetime.now(bd_tz)
-        tf_mins = 1 if timeframe == "1m" else (5 if timeframe == "5m" else 15)
-        next_candle_time = (now + timedelta(minutes=tf_mins)).replace(second=0, microsecond=0)
+    summary = analysis.summary
+    indicators = analysis.indicators
 
-        return {
-            "pair": symbol,
-            "timeframe": timeframe,
-            "entry_time": next_candle_time.strftime("%H:%M:%S"),
-            "direction": direction,
-            "tv_recommendation": tv_rec,
-            "rsi": rsi_val,
-            "buy_votes": buy_votes,
-            "sell_votes": sell_votes
-        }
-    except Exception as e:
-        return {"error": str(e)}
+    tv_rec = summary.get("RECOMMENDATION", "NEUTRAL")
+    buy_votes = summary.get("BUY", 0)
+    sell_votes = summary.get("SELL", 0)
+    rsi_val = round(indicators.get("RSI", 50), 2)
+
+    if "BUY" in tv_rec:
+        direction = "CALL"
+    elif "SELL" in tv_rec:
+        direction = "PUT"
+    else:
+        direction = "WAIT"
+
+    bd_tz = pytz.timezone('Asia/Dhaka')
+    now = datetime.now(bd_tz)
+    tf_mins = 1 if timeframe == "1m" else (5 if timeframe == "5m" else 15)
+    next_candle_time = (now + timedelta(minutes=tf_mins)).replace(second=0, microsecond=0)
+
+    return {
+        "pair": symbol,
+        "timeframe": timeframe,
+        "entry_time": next_candle_time.strftime("%H:%M:%S"),
+        "direction": direction,
+        "tv_recommendation": tv_rec,
+        "rsi": rsi_val,
+        "buy_votes": buy_votes,
+        "sell_votes": sell_votes
+    }
 
 @app.route('/')
 def index():
