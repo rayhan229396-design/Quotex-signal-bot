@@ -4,7 +4,7 @@ import pytz
 import yfinance as yf
 import pandas as pd
 from ta.momentum import RSIIndicator
-from ta.trend import SMAIndicator, EMAIndicator
+from ta.trend import EMAIndicator
 
 app = Flask(__name__)
 
@@ -15,7 +15,6 @@ CURRENCY_PAIRS = [
     "BTCUSD", "ETHUSD", "XAUUSD"
 ]
 
-# Mapping to Yahoo Finance Symbols
 YF_MAP = {
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "JPY=X",
     "AUDUSD": "AUDUSD=X", "USDCAD": "CAD=X", "USDCHF": "CHF=X",
@@ -157,19 +156,25 @@ def analyze_live_market(symbol, timeframe):
         if df.empty or len(df) < 15:
             return {"error": "Unable to fetch live price candles right now."}
 
-        # Calculate Technical Indicators
-        df['RSI'] = RSIIndicator(close=df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close'], window=14).rsi()
-        df['EMA20'] = EMAIndicator(close=df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close'], window=20).ema_indicator()
+        # Safe extraction for single series Close
+        if isinstance(df.columns, pd.MultiIndex):
+            close_series = df['Close'][yf_symbol]
+        else:
+            close_series = df['Close']
 
-        latest_close = float(df['Close'].iloc[-1])
-        latest_rsi = round(float(df['RSI'].iloc[-1]), 2)
-        latest_ema = float(df['EMA20'].iloc[-1])
+        close_series = close_series.dropna()
 
-        # Signal Logic
-        if latest_rsi < 35 or latest_close > latest_ema and latest_rsi < 55:
+        rsi = RSIIndicator(close=close_series, window=14).rsi()
+        ema = EMAIndicator(close=close_series, window=20).ema_indicator()
+
+        latest_close = float(close_series.iloc[-1])
+        latest_rsi = round(float(rsi.iloc[-1]), 2)
+        latest_ema = float(ema.iloc[-1])
+
+        if latest_rsi < 35 or (latest_close > latest_ema and latest_rsi < 55):
             direction = "CALL"
             rec = "STRONG BUY"
-        elif latest_rsi > 65 or latest_close < latest_ema and latest_rsi > 45:
+        elif latest_rsi > 65 or (latest_close < latest_ema and latest_rsi > 45):
             direction = "PUT"
             rec = "STRONG SELL"
         else:
