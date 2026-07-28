@@ -16,7 +16,7 @@ app = Flask(__name__)
 
 # API Keys Configuration
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6KwuimLIB6Pgr3J6AcTmvEQl67nA2nVqjRwspe8Up4PVQ")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8790700892:AAHEY-R__HoauY2ftvYL_aWgWWfcQdOPgTw")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8790700892:AAGmP0qjEF5FwI-H8JFS-Yw7YzNebXXOHDs")
 
 # Configure Gemini AI
 try:
