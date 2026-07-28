@@ -1,5 +1,6 @@
 Flask
 gunicorn
 pytz
-requests
-tradingview_ta
+yfinance
+pandas
+ta
