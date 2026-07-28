@@ -1,6 +1,9 @@
 Flask
 gunicorn
 pytz
+python-telegram-bot==13.15
+google-generativeai==0.8.3
+Pillow
 yfinance
 pandas
 ta
