@@ -1,7 +1,10 @@
 from flask import Flask, jsonify, request, render_template_string
 from datetime import datetime, timedelta
 import pytz
-from tradingview_ta import TA_Handler, Interval
+import yfinance as yf
+import pandas as pd
+from ta.momentum import RSIIndicator
+from ta.trend import SMAIndicator, EMAIndicator
 
 app = Flask(__name__)
 
@@ -9,15 +12,25 @@ CURRENCY_PAIRS = [
     "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
     "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", 
     "AUDJPY", "EURCAD", "GBPCAD", "EURAUD", "AUDCAD",
-    "BTCUSD", "ETHUSD", "XAUUSD", "XAGUSD"
+    "BTCUSD", "ETHUSD", "XAUUSD"
 ]
+
+# Mapping to Yahoo Finance Symbols
+YF_MAP = {
+    "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "JPY=X",
+    "AUDUSD": "AUDUSD=X", "USDCAD": "CAD=X", "USDCHF": "CHF=X",
+    "NZDUSD": "NZDUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
+    "GBPJPY": "GBPJPY=X", "AUDJPY": "AUDJPY=X", "EURCAD": "EURCAD=X",
+    "GBPCAD": "GBPCAD=X", "EURAUD": "EURAUD=X", "AUDCAD": "AUDCAD=X",
+    "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD", "XAUUSD": "GC=F"
+}
 
 HTML_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TradingView Live Signal Dashboard</title>
+    <title>Live AI Market Signal</title>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Rajdhani', sans-serif; }
@@ -46,7 +59,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <body>
 <div class="dashboard">
     <div class="header">
-        <h1>TRADINGVIEW LIVE AI</h1>
+        <h1>LIVE MARKET AI</h1>
         <p>Real-Time Market Indicators & Analysis</p>
     </div>
     <div class="input-group">
@@ -68,7 +81,7 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <button class="btn-analyze" onclick="getSignal()">ANALYZE LIVE MARKET</button>
     <div class="loader" id="loader">
         <div class="spinner"></div>
-        <p style="font-size: 12px; color: #787b86; margin-top: 8px;">Fetching Live Data from TradingView...</p>
+        <p style="font-size: 12px; color: #787b86; margin-top: 8px;">Analyzing Real-Time Candlestick Data...</p>
     </div>
     <div class="result-box" id="resultBox">
         <div class="signal-banner" id="signalBanner">
@@ -76,9 +89,9 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
         </div>
         <div class="info-row"><span>Asset:</span><span class="val-highlight" id="resPair">EURUSD</span></div>
         <div class="info-row"><span>Entry Time (UTC+6):</span><span class="val-highlight" id="resTime">--:--:--</span></div>
+        <div class="info-row"><span>Live Price:</span><span class="val-highlight" id="resPrice">--</span></div>
         <div class="info-row"><span>RSI Value:</span><span class="val-highlight" id="resRsi">--</span></div>
-        <div class="info-row"><span>TV Recommendation:</span><span class="prob-badge" id="resTvRec">--</span></div>
-        <div class="info-row"><span>Buy / Sell Indicators:</span><span class="val-highlight" id="resCounts">--</span></div>
+        <div class="info-row"><span>Analysis Recommendation:</span><span class="prob-badge" id="resRec">--</span></div>
     </div>
 </div>
 <script>
@@ -99,16 +112,16 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             loader.style.display = 'none';
 
             if(data.error) {
-                alert('TradingView Error: ' + data.error);
+                alert('Market Error: ' + data.error);
                 return;
             }
 
             resultBox.style.display = 'block';
             document.getElementById('resPair').innerText = data.pair;
             document.getElementById('resTime').innerText = data.entry_time;
+            document.getElementById('resPrice').innerText = data.price;
             document.getElementById('resRsi').innerText = data.rsi;
-            document.getElementById('resTvRec').innerText = data.tv_recommendation;
-            document.getElementById('resCounts').innerText = `Buy: ${data.buy_votes} | Sell: ${data.sell_votes}`;
+            document.getElementById('resRec').innerText = data.recommendation;
 
             const banner = document.getElementById('signalBanner');
             const signalText = document.getElementById('signalText');
@@ -132,77 +145,53 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 </body>
 </html>'''
 
-def fetch_tradingview_analysis(symbol, timeframe):
-    tf_map = {
-        "1m": Interval.INTERVAL_1_MINUTE,
-        "5m": Interval.INTERVAL_5_MINUTES,
-        "15m": Interval.INTERVAL_15_MINUTES
-    }
-    
-    # Try different configurations if first fails
-    configs = []
-    if symbol in ["BTCUSD", "ETHUSD"]:
-        configs.append({"screener": "crypto", "exchange": "BINANCE"})
-        configs.append({"screener": "crypto", "exchange": "BITSTAMP"})
-    elif symbol in ["XAUUSD", "XAGUSD"]:
-        configs.append({"screener": "forex", "exchange": "OANDA"})
-        configs.append({"screener": "cfd", "exchange": "TVC"})
-    else:
-        configs.append({"screener": "forex", "exchange": "FX_IDC"})
-        configs.append({"screener": "forex", "exchange": "OANDA"})
-        configs.append({"screener": "forex", "exchange": "FOREXCOM"})
+def analyze_live_market(symbol, timeframe):
+    try:
+        yf_symbol = YF_MAP.get(symbol, f"{symbol}=X")
+        tf_map = {"1m": "1m", "5m": "5m", "15m": "15m"}
+        interval = tf_map.get(timeframe, "1m")
+        period = "1d" if interval == "1m" else "5d"
 
-    analysis = None
-    last_err = ""
+        df = yf.download(tickers=yf_symbol, period=period, interval=interval, progress=False)
+        
+        if df.empty or len(df) < 15:
+            return {"error": "Unable to fetch live price candles right now."}
 
-    for cfg in configs:
-        try:
-            handler = TA_Handler(
-                symbol=symbol,
-                exchange=cfg["exchange"],
-                screener=cfg["screener"],
-                interval=tf_map.get(timeframe, Interval.INTERVAL_1_MINUTE)
-            )
-            analysis = handler.get_analysis()
-            if analysis:
-                break
-        except Exception as e:
-            last_err = str(e)
-            continue
+        # Calculate Technical Indicators
+        df['RSI'] = RSIIndicator(close=df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close'], window=14).rsi()
+        df['EMA20'] = EMAIndicator(close=df['Close'].iloc[:, 0] if isinstance(df['Close'], pd.DataFrame) else df['Close'], window=20).ema_indicator()
 
-    if not analysis:
-        return {"error": f"Data not found for {symbol}. ({last_err})"}
+        latest_close = float(df['Close'].iloc[-1])
+        latest_rsi = round(float(df['RSI'].iloc[-1]), 2)
+        latest_ema = float(df['EMA20'].iloc[-1])
 
-    summary = analysis.summary
-    indicators = analysis.indicators
+        # Signal Logic
+        if latest_rsi < 35 or latest_close > latest_ema and latest_rsi < 55:
+            direction = "CALL"
+            rec = "STRONG BUY"
+        elif latest_rsi > 65 or latest_close < latest_ema and latest_rsi > 45:
+            direction = "PUT"
+            rec = "STRONG SELL"
+        else:
+            direction = "WAIT"
+            rec = "NEUTRAL"
 
-    tv_rec = summary.get("RECOMMENDATION", "NEUTRAL")
-    buy_votes = summary.get("BUY", 0)
-    sell_votes = summary.get("SELL", 0)
-    rsi_val = round(indicators.get("RSI", 50), 2)
+        bd_tz = pytz.timezone('Asia/Dhaka')
+        now = datetime.now(bd_tz)
+        tf_mins = 1 if timeframe == "1m" else (5 if timeframe == "5m" else 15)
+        next_candle_time = (now + timedelta(minutes=tf_mins)).replace(second=0, microsecond=0)
 
-    if "BUY" in tv_rec:
-        direction = "CALL"
-    elif "SELL" in tv_rec:
-        direction = "PUT"
-    else:
-        direction = "WAIT"
-
-    bd_tz = pytz.timezone('Asia/Dhaka')
-    now = datetime.now(bd_tz)
-    tf_mins = 1 if timeframe == "1m" else (5 if timeframe == "5m" else 15)
-    next_candle_time = (now + timedelta(minutes=tf_mins)).replace(second=0, microsecond=0)
-
-    return {
-        "pair": symbol,
-        "timeframe": timeframe,
-        "entry_time": next_candle_time.strftime("%H:%M:%S"),
-        "direction": direction,
-        "tv_recommendation": tv_rec,
-        "rsi": rsi_val,
-        "buy_votes": buy_votes,
-        "sell_votes": sell_votes
-    }
+        return {
+            "pair": symbol,
+            "timeframe": timeframe,
+            "price": round(latest_close, 5),
+            "entry_time": next_candle_time.strftime("%H:%M:%S"),
+            "direction": direction,
+            "recommendation": rec,
+            "rsi": latest_rsi
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.route('/')
 def index():
@@ -213,7 +202,7 @@ def analyze():
     data = request.get_json(silent=True) or {}
     pair = data.get('pair', 'EURUSD')
     timeframe = data.get('timeframe', '1m')
-    result = fetch_tradingview_analysis(pair, timeframe)
+    result = analyze_live_market(pair, timeframe)
     return jsonify(result)
 
 if __name__ == '__main__':
