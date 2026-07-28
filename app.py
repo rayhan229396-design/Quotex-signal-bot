@@ -1,13 +1,28 @@
-from flask import Flask, jsonify, request, render_template_string
+import os
+import io
+import threading
 from datetime import datetime, timedelta
 import pytz
+from flask import Flask, jsonify, request, render_template_string
+from PIL import Image
 import yfinance as yf
 import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator
+import google.generativeai as genai
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
 app = Flask(__name__)
 
+# 🔑 API Keys
+GEMINI_API_KEY = "AQ.Ab8RN6KwuimLIB6Pgr3J6AcTmvEQl67nA2nVqjRwspe8Up4PVQ"
+TELEGRAM_BOT_TOKEN = "8790700892:AAHEY-R__HoauY2ftvYL_aWgWWfcQdOPgTw"
+
+# Configure Gemini AI
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+# Web Dashboard Currency Pairs
 CURRENCY_PAIRS = [
     "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
     "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", 
@@ -156,7 +171,6 @@ def analyze_live_market(symbol, timeframe):
         if df.empty or len(df) < 15:
             return {"error": "Unable to fetch live price candles right now."}
 
-        # Safe extraction for single series Close
         if isinstance(df.columns, pd.MultiIndex):
             close_series = df['Close'][yf_symbol]
         else:
@@ -198,6 +212,63 @@ def analyze_live_market(symbol, timeframe):
     except Exception as e:
         return {"error": str(e)}
 
+# --- TELEGRAM BOT LOGIC ---
+PROMPT = """
+You are an expert Binary Options & Forex Technical Analysis Trader. 
+Analyze the provided candlestick chart image very carefully.
+
+Examine:
+1. Candlestick patterns (e.g. Hammer, Shooting Star, Engulfing, Doji, Pinbar, Wicks).
+2. Market Trend (Uptrend, Downtrend, or Sideways).
+3. Support and Resistance levels / Rejection wicks.
+
+Based on your analysis, predict the direction of the VERY NEXT CANDLE.
+
+Respond strictly in this clean format:
+
+📊 **CHART AI SIGNAL ANALYSIS**
+---------------------------------
+📈 **Trend:** [Uptrend / Downtrend / Sideways]
+🔍 **Pattern Identified:** [Pattern Name]
+🛡️ **Key Level:** [Near Support / Near Resistance / Neutral]
+🎯 **Prediction (Next Candle):** [🟢 CALL (GREEN) / 🔴 PUT (RED) / ⚠️ NO TRADE]
+🔥 **Confidence Score:** [e.g. 85%]
+💡 **Reason:** [Brief 1-sentence reason]
+"""
+
+def handle_photo(update, context):
+    try:
+        update.message.reply_text("🔎 Analyzing your chart image with AI Vision... Please wait 5-10 seconds.")
+        photo_file = update.message.photo[-1].get_file()
+        photo_bytes = photo_file.download_as_bytearray()
+        image = Image.open(io.BytesIO(photo_bytes))
+        response = model.generate_content([PROMPT, image])
+        update.message.reply_text(response.text, parse_mode='Markdown')
+    except Exception as e:
+        update.message.reply_text(f"❌ Error analyzing image: {str(e)}")
+
+def start(update, context):
+    update.message.reply_text(
+        "👋 Welcome to Chart Vision AI Bot!\n\n"
+        "Send me a clean screenshot of any Candlestick Chart (Quotex, Pocket Option, TradingView, OTC or Live).\n"
+        "I will scan the patterns and predict the next candle direction for you! 🚀"
+    )
+
+def run_telegram_bot():
+    try:
+        updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
+        dp = updater.dispatcher
+        dp.add_handler(CommandHandler("start", start))
+        dp.add_handler(MessageHandler(Filters.photo, handle_photo))
+        updater.start_polling(drop_pending_updates=True)
+        print("Telegram Bot Active & Listening...")
+    except Exception as e:
+        print(f"Bot failed to start: {e}")
+
+# Start Telegram bot in background thread
+threading.Thread(target=run_telegram_bot, daemon=True).start()
+
+# --- FLASK ROUTES ---
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE, pairs=CURRENCY_PAIRS)
