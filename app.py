@@ -14,16 +14,16 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
 app = Flask(__name__)
 
-# API Keys Configuration
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6LcgiCGIwfmGPTEfFCpeW2IdG5oFFiH7dAfydrf8p7jLQ")
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8790700892:AAGmP0qjEF5FwI-H8JFS-Yw7YzNebXXOHDs")
+# Render Environment Variables থেকে কী রিড করা
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 
-# Configure Gemini AI
-try:
+# Gemini AI কনফিগারেশন
+if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    print(f"Gemini Init Error: {e}")
+else:
+    model = None
 
 # Web Dashboard Currency Pairs
 CURRENCY_PAIRS = [
@@ -241,6 +241,10 @@ Respond strictly in this clean format:
 
 def handle_photo(update, context):
     try:
+        if not model:
+            update.message.reply_text("❌ Gemini API Key is missing. Please check Render Environment Variables.")
+            return
+
         update.message.reply_text("🔎 Analyzing your chart image with AI Vision... Please wait 5-10 seconds.")
         photo_file = update.message.photo[-1].get_file()
         photo_bytes = photo_file.download_as_bytearray()
@@ -259,6 +263,9 @@ def start(update, context):
 
 def run_telegram_bot():
     try:
+        if not TELEGRAM_BOT_TOKEN:
+            print("Telegram Bot Token Missing!")
+            return
         updater = Updater(TELEGRAM_BOT_TOKEN, use_context=True)
         dp = updater.dispatcher
         dp.add_handler(CommandHandler("start", start))
