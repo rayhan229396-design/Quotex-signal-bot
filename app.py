@@ -1,35 +1,26 @@
 from flask import Flask, jsonify, request, render_template_string
 from datetime import datetime, timedelta
-import random
 import pytz
+from tradingview_ta import TA_Handler, Interval, Exchange
 
 app = Flask(__name__)
 
+# TradingView-তে কাজ করে এমন প্রধান কারেন্সি, ক্রিপ্টো ও কমোডিটি পেয়ারসমূহ
 CURRENCY_PAIRS = [
-    # --- Quotex Major Live Pairs ---
-    "EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", 
-    "USD/CHF", "NZD/USD", "EUR/GBP", "EUR/JPY", "GBP/JPY", 
-    "AUD/JPY", "EUR/CAD", "GBP/CAD", "EUR/AUD", "AUD/CAD",
-    "CHF/JPY", "CAD/JPY", "EUR/CHF", "GBP/CHF", "AUD/NZD",
-    
-    # --- Quotex OTC Pairs ---
-    "EUR/USD (OTC)", "GBP/USD (OTC)", "USD/BDT (OTC)", "USD/INR (OTC)",
-    "AUD/CAD (OTC)", "EUR/JPY (OTC)", "GBP/JPY (OTC)", "USD/JPY (OTC)",
-    "USD/PKR (OTC)", "USD/EGP (OTC)", "USD/BRL (OTC)", "USD/TRY (OTC)",
-    "USD/NGN (OTC)", "USD/PHP (OTC)", "USD/IDR (OTC)",
-    
-    # --- Commodities & Crypto ---
-    "Crypto IDX", "Bitcoin (BTC/USD)", "Ethereum (ETH/USD)", 
-    "Gold (XAU/USD)", "Silver (XAG/USD)", "USCrude (Oil)"
+    # Forex / Live Pairs
+    "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
+    "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", 
+    "AUDJPY", "EURCAD", "GBPCAD", "EURAUD", "AUDCAD",
+    # Crypto & Commodities
+    "BTCUSD", "ETHUSD", "XAUUSD", "XAGUSD"
 ]
-
 
 HTML_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Quantum AI - Quotex Signal Dashboard</title>
+    <title>TradingView Live Signal Dashboard</title>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Rajdhani', sans-serif; }
@@ -58,11 +49,11 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 <body>
 <div class="dashboard">
     <div class="header">
-        <h1>⚡ QUANTUM AI SIGNAL</h1>
-        <p>Ultra-High Accuracy Strategy Engine</p>
+        <h1>TRADINGVIEW LIVE AI</h1>
+        <p>Real-Time Market Indicators & Analysis</p>
     </div>
     <div class="input-group">
-        <label>SELECT ASSET / PAIR</label>
+        <label>SELECT LIVE ASSET</label>
         <select id="pairSelect">
             {% for pair in pairs %}
                 <option value="{{ pair }}">{{ pair }}</option>
@@ -72,24 +63,25 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
     <div class="input-group">
         <label>TIMEFRAME</label>
         <select id="tfSelect">
-            <option value="1 MIN">1 MINUTE</option>
-            <option value="5 MIN">5 MINUTES</option>
+            <option value="1m">1 MINUTE</option>
+            <option value="5m">5 MINUTES</option>
+            <option value="15m">15 MINUTES</option>
         </select>
     </div>
-    <button class="btn-analyze" onclick="getSignal()">GENERATE SIGNAL</button>
+    <button class="btn-analyze" onclick="getSignal()">ANALYZE LIVE MARKET</button>
     <div class="loader" id="loader">
         <div class="spinner"></div>
-        <p style="font-size: 12px; color: #787b86; margin-top: 8px;">Analyzing S/R, FVG & Patterns...</p>
+        <p style="font-size: 12px; color: #787b86; margin-top: 8px;">Fetching Live Data from TradingView...</p>
     </div>
     <div class="result-box" id="resultBox">
         <div class="signal-banner" id="signalBanner">
             <div style="font-size: 18px; font-weight: 800;" id="signalText">CALL</div>
         </div>
-        <div class="info-row"><span>Asset:</span><span class="val-highlight" id="resPair">EUR/USD (OTC)</span></div>
+        <div class="info-row"><span>Asset:</span><span class="val-highlight" id="resPair">EURUSD</span></div>
         <div class="info-row"><span>Entry Time (UTC+6):</span><span class="val-highlight" id="resTime">--:--:--</span></div>
-        <div class="info-row"><span>Winning Probability:</span><span class="prob-badge" id="resProb">0%</span></div>
-        <div class="info-row"><span>Detected Pattern:</span><span class="val-highlight" id="resPattern">--</span></div>
-        <div class="info-row"><span>Signal Strength:</span><span class="val-highlight" id="resStrength">--</span></div>
+        <div class="info-row"><span>RSI Value:</span><span class="val-highlight" id="resRsi">--</span></div>
+        <div class="info-row"><span>TV Recommendation:</span><span class="prob-badge" id="resTvRec">--</span></div>
+        <div class="info-row"><span>Buy / Sell Indicators:</span><span class="val-highlight" id="resCounts">--</span></div>
     </div>
 </div>
 <script>
@@ -109,13 +101,21 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
             const data = await response.json();
             loader.style.display = 'none';
             resultBox.style.display = 'block';
+
+            if(data.error) {
+                alert('Error fetching TradingView data for ' + pair);
+                return;
+            }
+
             document.getElementById('resPair').innerText = data.pair;
             document.getElementById('resTime').innerText = data.entry_time;
-            document.getElementById('resProb').innerText = data.probability;
-            document.getElementById('resPattern').innerText = data.pattern;
-            document.getElementById('resStrength').innerText = data.strength;
+            document.getElementById('resRsi').innerText = data.rsi;
+            document.getElementById('resTvRec').innerText = data.tv_recommendation;
+            document.getElementById('resCounts').innerText = `Buy: ${data.buy_votes} | Sell: ${data.sell_votes}`;
+
             const banner = document.getElementById('signalBanner');
             const signalText = document.getElementById('signalText');
+
             if (data.direction === 'CALL') {
                 banner.className = 'signal-banner call-bg';
                 signalText.innerText = '🟢 NEXT CANDLE: GREEN (CALL)';
@@ -124,10 +124,10 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
                 signalText.innerText = '🔴 NEXT CANDLE: RED (PUT)';
             } else {
                 banner.className = 'signal-banner wait-bg';
-                signalText.innerText = '⚠️ NO TRADE (LOW WIN RATE)';
+                signalText.innerText = '⚠️ NO TRADE / NEUTRAL';
             }
         } catch (err) {
-            alert('Error generating signal. Try again!');
+            alert('Error fetching signal. Try again!');
             loader.style.display = 'none';
         }
     }
@@ -135,55 +135,57 @@ HTML_TEMPLATE = '''<!DOCTYPE html>
 </body>
 </html>'''
 
-def analyze_advanced_market(pair, timeframe):
-    total_confluence = 0
-    trend_score = random.choice([20, 25, 0])
-    total_confluence += trend_score
-    osc_score = random.choice([20, 15, 0])
-    total_confluence += osc_score
-    smc_score = random.choice([25, 20, 10])
-    total_confluence += smc_score
-    
-    patterns = [
-        ("Bullish Hammer", 20, "CALL"), ("Shooting Star", 20, "PUT"),
-        ("Bullish Engulfing", 20, "CALL"), ("Bearish Engulfing", 20, "PUT"),
-        ("Doji (Indecision)", 15, "REVERSAL"), ("Morning Star", 25, "CALL"),
-        ("Evening Star", 25, "PUT")
-    ]
-    detected_pattern, pattern_score, pattern_dir = random.choice(patterns)
-    total_confluence += pattern_score
-    
-    win_probability = min(98, max(65, total_confluence + random.randint(-5, 5)))
-    
-    if win_probability >= 88:
-        signal_color = "GREEN (CALL)" if pattern_dir in ["CALL", "REVERSAL"] else "RED (PUT)"
-        direction = "CALL" if signal_color == "GREEN (CALL)" else "PUT"
-        strength = "ULTRA HIGH (A+ SETUP)"
-    elif win_probability >= 78:
-        signal_color = "GREEN (CALL)" if pattern_dir == "CALL" else "RED (PUT)"
-        direction = "CALL" if signal_color == "GREEN (CALL)" else "PUT"
-        strength = "HIGH"
-    else:
-        signal_color = "NO TRADE"
-        direction = "WAIT"
-        strength = "WEAK - REJECTED"
-        win_probability = random.randint(45, 60)
+def fetch_tradingview_analysis(symbol, timeframe):
+    try:
+        tf_map = {
+            "1m": Interval.INTERVAL_1_MINUTE,
+            "5m": Interval.INTERVAL_5_MINUTES,
+            "15m": Interval.INTERVAL_15_MINUTES
+        }
+        
+        screener = "crypto" if symbol in ["BTCUSD", "ETHUSD"] else "forex"
+        exchange = "BINANCE" if symbol in ["BTCUSD", "ETHUSD"] else "FX_IDC"
 
-    bd_tz = pytz.timezone('Asia/Dhaka')
-    now = datetime.now(bd_tz)
-    tf_minutes = 1 if timeframe == "1 MIN" else 5
-    next_candle_time = (now + timedelta(minutes=tf_minutes)).replace(second=0, microsecond=0)
-    
-    return {
-        "pair": pair,
-        "timeframe": timeframe,
-        "entry_time": next_candle_time.strftime("%H:%M:%S"),
-        "signal": signal_color,
-        "direction": direction,
-        "probability": f"{win_probability}%",
-        "strength": strength,
-        "pattern": detected_pattern
-    }
+        handler = TA_Handler(
+            symbol=symbol,
+            exchange=exchange,
+            screener=screener,
+            interval=tf_map.get(timeframe, Interval.INTERVAL_1_MINUTE)
+        )
+        
+        analysis = handler.get_analysis()
+        summary = analysis.summary
+        indicators = analysis.indicators
+
+        tv_rec = summary.get("RECOMMENDATION", "NEUTRAL")
+        buy_votes = summary.get("BUY", 0)
+        sell_votes = summary.get("SELL", 0)
+        rsi_val = round(indicators.get("RSI", 50), 2)
+
+        if "BUY" in tv_rec:
+            direction = "CALL"
+        elif "SELL" in tv_rec:
+            direction = "PUT"
+        else:
+            direction = "WAIT"
+
+        bd_tz = pytz.timezone('Asia/Dhaka')
+        now = datetime.now(bd_tz)
+        tf_mins = 1 if timeframe == "1m" else (5 if timeframe == "5m" else 15)
+        next_candle_time = (now + timedelta(minutes=tf_mins)).replace(second=0, microsecond=0)
+
+        return {
+            "pair": symbol,
+            "timeframe": timeframe,
+            "entry_time": next_candle_time.strftime("%H:%M:%S"),
+            "direction": direction,
+            "tv_recommendation": tv_rec,
+            "rsi": rsi_val,
+            "buy_votes": buy_votes,
+            "sell_votes": sell_votes
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 @app.route('/')
 def index():
@@ -192,9 +194,9 @@ def index():
 @app.route('/api/analyze', methods=['POST'])
 def analyze():
     data = request.get_json(silent=True) or {}
-    pair = data.get('pair', 'EUR/USD (OTC)')
-    timeframe = data.get('timeframe', '1 MIN')
-    result = analyze_advanced_market(pair, timeframe)
+    pair = data.get('pair', 'EURUSD')
+    timeframe = data.get('timeframe', '1m')
+    result = fetch_tradingview_analysis(pair, timeframe)
     return jsonify(result)
 
 if __name__ == '__main__':
