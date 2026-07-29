@@ -1,21 +1,17 @@
-import os
-import pytz
+from flask import Flask, jsonify, request, render_template_string
 from datetime import datetime, timedelta
-from flask import Flask, jsonify, render_template_string, request
-import pandas as pd
-import numpy as np
+import pytz
 import yfinance as yf
-
-# Technical Indicators
+import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.trend import EMAIndicator
-from ta.volatility import BollingerBands
 
 app = Flask(__name__)
 
 CURRENCY_PAIRS = [
     "EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", 
     "USDCHF", "NZDUSD", "EURGBP", "EURJPY", "GBPJPY", 
+    "AUDJPY", "EURCAD", "GBPCAD", "EURAUD", "AUDCAD",
     "BTCUSD", "ETHUSD", "XAUUSD"
 ]
 
@@ -23,486 +19,133 @@ YF_MAP = {
     "EURUSD": "EURUSD=X", "GBPUSD": "GBPUSD=X", "USDJPY": "JPY=X",
     "AUDUSD": "AUDUSD=X", "USDCAD": "CAD=X", "USDCHF": "CHF=X",
     "NZDUSD": "NZDUSD=X", "EURGBP": "EURGBP=X", "EURJPY": "EURJPY=X",
-    "GBPJPY": "GBPJPY=X", "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD", "XAUUSD": "GC=F"
+    "GBPJPY": "GBPJPY=X", "AUDJPY": "AUDJPY=X", "EURCAD": "EURCAD=X",
+    "GBPCAD": "GBPCAD=X", "EURAUD": "EURAUD=X", "AUDCAD": "AUDCAD=X",
+    "BTCUSD": "BTC-USD", "ETHUSD": "ETH-USD", "XAUUSD": "GC=F"
 }
 
-HTML_TEMPLATE = """<!DOCTYPE html>
+HTML_TEMPLATE = '''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real Market Signal AI - Pro Glassmorphic UI</title>
-    <!-- Premium Fonts Import -->
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Space+Grotesk:wght@600;700&display=swap" rel="stylesheet">
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <title>Live AI Market Signal</title>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&family=Rajdhani:wght@500;700&display=swap" rel="stylesheet">
     <style>
-        :root {
-            --bg-dark: #050811;
-            --card-bg: rgba(15, 23, 42, 0.75);
-            --card-border: rgba(0, 242, 254, 0.18);
-            --neon-cyan: #00f2fe;
-            --neon-blue: #4facfe;
-            --green-glow: #00e676;
-            --red-glow: #ff1744;
-            --amber-glow: #ffab00;
-            --text-main: #f8fafc;
-            --text-sub: #94a3b8;
-        }
-
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        
-        body {
-            background-color: var(--bg-dark);
-            color: var(--text-main);
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 20px 12px;
-            background-image: 
-                radial-gradient(circle at 15% 15%, rgba(0, 242, 254, 0.08) 0%, transparent 45%),
-                radial-gradient(circle at 85% 85%, rgba(79, 172, 254, 0.08) 0%, transparent 45%);
-        }
-
-        .container {
-            width: 100%;
-            max-width: 450px;
-            background: var(--card-bg);
-            border: 1px solid var(--card-border);
-            border-radius: 24px;
-            padding: 28px 22px;
-            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 25px rgba(0, 242, 254, 0.1);
-            backdrop-filter: blur(16px);
-            position: relative;
-            overflow: hidden;
-        }
-
-        .container::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0;
-            height: 3px;
-            background: linear-gradient(90deg, #00f2fe, #4facfe, #00e676);
-        }
-
-        .header {
-            text-align: center;
-            margin-bottom: 22px;
-        }
-
-        .badge-live {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            background: rgba(0, 230, 118, 0.1);
-            border: 1px solid rgba(0, 230, 118, 0.3);
-            color: var(--green-glow);
-            padding: 5px 14px;
-            border-radius: 20px;
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 12px;
-        }
-
-        .dot {
-            width: 7px; height: 7px;
-            background-color: var(--green-glow);
-            border-radius: 50%;
-            box-shadow: 0 0 8px var(--green-glow);
-            animation: pulse 1.5s infinite;
-        }
-
-        @keyframes pulse {
-            0% { opacity: 0.3; }
-            50% { opacity: 1; }
-            100% { opacity: 0.3; }
-        }
-
-        .header h1 {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 21px;
-            font-weight: 900;
-            background: linear-gradient(135deg, #ffffff 0%, #00f2fe 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            letter-spacing: 1.5px;
-            text-transform: uppercase;
-        }
-
-        .header p {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 11px;
-            font-weight: 600;
-            color: var(--text-sub);
-            letter-spacing: 0.8px;
-            margin-top: 6px;
-            text-transform: uppercase;
-        }
-
-        .form-group {
-            margin-bottom: 16px;
-        }
-
-        .form-group label {
-            display: block;
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--text-sub);
-            margin-bottom: 8px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .select-box {
-            width: 100%;
-            padding: 14px 16px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 14px;
-            color: #fff;
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            font-size: 15px;
-            font-weight: 700;
-            outline: none;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .select-box:focus {
-            border-color: var(--neon-cyan);
-            box-shadow: 0 0 15px rgba(0, 242, 254, 0.25);
-            background: rgba(255, 255, 255, 0.07);
-        }
-
-        .select-box option {
-            background: #0f172a;
-            color: #fff;
-        }
-
-        .btn-analyze {
-            width: 100%;
-            padding: 16px;
-            margin-top: 10px;
-            background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
-            border: none;
-            border-radius: 14px;
-            color: #030712;
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 16px;
-            font-weight: 700;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 8px 25px rgba(0, 242, 254, 0.35);
-        }
-
-        .btn-analyze:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 12px 30px rgba(0, 242, 254, 0.55);
-            filter: brightness(1.1);
-        }
-
-        .loader {
-            display: none;
-            text-align: center;
-            padding: 25px 0;
-        }
-
-        .spinner {
-            width: 42px; height: 42px;
-            border: 4px solid rgba(255, 255, 255, 0.05);
-            border-top: 4px solid var(--neon-cyan);
-            border-radius: 50%;
-            animation: spin 0.8s linear infinite;
-            margin: 0 auto;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        .result-card {
-            display: none;
-            margin-top: 22px;
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid var(--card-border);
-            border-radius: 18px;
-            padding: 20px;
-            animation: fadeIn 0.4s ease;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .signal-box {
-            text-align: center;
-            padding: 18px;
-            border-radius: 14px;
-            margin-bottom: 18px;
-            font-family: 'Orbitron', sans-serif;
-            font-weight: 900;
-            letter-spacing: 1.5px;
-            text-shadow: 0 0 12px currentColor;
-        }
-
-        .signal-call {
-            background: rgba(0, 230, 118, 0.12);
-            border: 2px solid var(--green-glow);
-            color: var(--green-glow);
-        }
-
-        .signal-put {
-            background: rgba(255, 23, 68, 0.12);
-            border: 2px solid var(--red-glow);
-            color: var(--red-glow);
-        }
-
-        .signal-wait {
-            background: rgba(255, 171, 0, 0.12);
-            border: 2px solid var(--amber-glow);
-            color: var(--amber-glow);
-        }
-
-        .signal-closed {
-            background: rgba(239, 68, 68, 0.15);
-            border: 2px solid #ef4444;
-            color: #ef4444;
-        }
-
-        .metrics-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-
-        .metric-box {
-            background: rgba(255, 255, 255, 0.03);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            padding: 12px;
-            border-radius: 12px;
-            text-align: center;
-        }
-
-        .metric-label {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 10px;
-            color: var(--text-sub);
-            font-weight: 700;
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        .metric-value {
-            font-family: 'Orbitron', sans-serif;
-            font-size: 13px;
-            font-weight: 800;
-            color: #fff;
-            letter-spacing: 0.5px;
-        }
-
-        .accuracy-badge {
-            display: inline-block;
-            background: linear-gradient(135deg, #00f2fe, #4facfe);
-            color: #000;
-            padding: 2px 10px;
-            border-radius: 20px;
-            font-family: 'Orbitron', sans-serif;
-            font-size: 12px;
-            font-weight: 900;
-        }
-
-        .reason-card {
-            background: rgba(0, 0, 0, 0.35);
-            border-left: 3px solid var(--neon-cyan);
-            border-radius: 10px;
-            padding: 12px 14px;
-            font-size: 12px;
-            line-height: 1.6;
-            color: #cbd5e1;
-            font-family: 'Plus Jakarta Sans', sans-serif;
-        }
-
-        .reason-card strong {
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 11px;
-            letter-spacing: 0.8px;
-            color: var(--neon-cyan);
-        }
-
-        .footer-note {
-            text-align: center;
-            font-family: 'Space Grotesk', sans-serif;
-            font-size: 11px;
-            font-weight: 600;
-            color: #475569;
-            margin-top: 20px;
-            letter-spacing: 0.5px;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Rajdhani', sans-serif; }
+        body { background-color: #0b0e14; color: #e2e8f0; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 15px; }
+        .dashboard { width: 100%; max-width: 420px; background: #131722; border: 1px solid #2a2e3d; border-radius: 20px; padding: 24px; box-shadow: 0 0 35px rgba(0, 231, 255, 0.1); }
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h1 { font-family: 'Orbitron', sans-serif; font-size: 20px; color: #00e7ff; letter-spacing: 1.5px; text-shadow: 0 0 10px rgba(0, 231, 255, 0.5); }
+        .header p { font-size: 12px; color: #787b86; margin-top: 4px; }
+        .input-group { margin-bottom: 15px; }
+        label { display: block; font-size: 13px; color: #9db2ce; margin-bottom: 6px; font-weight: 700; }
+        select { width: 100%; padding: 12px; background: #1e222d; border: 1px solid #363c4e; border-radius: 10px; color: #fff; font-size: 15px; font-weight: bold; outline: none; }
+        .btn-analyze { width: 100%; padding: 15px; background: linear-gradient(135deg, #0052d4, #4364f7, #6fb1fc); border: none; border-radius: 12px; color: white; font-family: 'Orbitron', sans-serif; font-size: 15px; font-weight: 800; cursor: pointer; margin-top: 10px; }
+        .loader { display: none; text-align: center; margin: 20px 0; }
+        .spinner { width: 35px; height: 35px; border: 4px solid #1e222d; border-top: 4px solid #00e7ff; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .result-box { display: none; margin-top: 22px; background: #1e222d; border-radius: 14px; padding: 18px; border: 1px solid #2a2e3d; }
+        .signal-banner { text-align: center; padding: 14px; border-radius: 10px; margin-bottom: 15px; font-family: 'Orbitron', sans-serif; }
+        .call-bg { background: rgba(8, 153, 129, 0.2); border: 2px solid #089981; color: #26a69a; }
+        .put-bg { background: rgba(242, 54, 69, 0.2); border: 2px solid #f23645; color: #f23645; }
+        .wait-bg { background: rgba(255, 179, 0, 0.2); border: 2px solid #ffb300; color: #ffb300; }
+        .info-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #2a2e3d; font-size: 14px; }
+        .val-highlight { font-weight: bold; color: #00e7ff; }
+        .prob-badge { background: #00e7ff; color: #0b0e14; padding: 2px 8px; border-radius: 6px; font-weight: 800; }
     </style>
 </head>
 <body>
-
-<div class="container">
+<div class="dashboard">
     <div class="header">
-        <div class="badge-live"><span class="dot"></span> 4-Layer Institutional Logic</div>
-        <h1>REAL MARKET SIGNAL AI</h1>
-        <p>Advanced Algorithmic Confluence Engine</p>
+        <h1>LIVE MARKET AI</h1>
+        <p>Real-Time Market Indicators & Analysis</p>
     </div>
-
-    <div class="form-group">
-        <label>SELECT ASSET PAIR</label>
-        <select id="pairSelect" class="select-box">
+    <div class="input-group">
+        <label>SELECT LIVE ASSET</label>
+        <select id="pairSelect">
             {% for pair in pairs %}
                 <option value="{{ pair }}">{{ pair }}</option>
             {% endfor %}
         </select>
     </div>
-
-    <div class="form-group">
-        <label>SELECT TIMEFRAME</label>
-        <select id="tfSelect" class="select-box">
+    <div class="input-group">
+        <label>TIMEFRAME</label>
+        <select id="tfSelect">
             <option value="1m">1 MINUTE</option>
             <option value="5m">5 MINUTES</option>
             <option value="15m">15 MINUTES</option>
         </select>
     </div>
-
-    <button class="btn-analyze" onclick="getSignal()">ANALYZE SIGNAL</button>
-
+    <button class="btn-analyze" onclick="getSignal()">ANALYZE LIVE MARKET</button>
     <div class="loader" id="loader">
         <div class="spinner"></div>
-        <p style="font-family: 'Space Grotesk', sans-serif; font-size: 12px; color: var(--text-sub); margin-top: 12px; font-weight: 600; letter-spacing: 0.5px;">
-            Scanning 4-Layer Institutional Logic...
-        </p>
+        <p style="font-size: 12px; color: #787b86; margin-top: 8px;">Analyzing Real-Time Candlestick Data...</p>
     </div>
-
-    <div class="result-card" id="resultCard">
-        <div class="signal-box" id="signalBox">
-            <div style="font-size: 18px;" id="signalText">CALL</div>
+    <div class="result-box" id="resultBox">
+        <div class="signal-banner" id="signalBanner">
+            <div style="font-size: 18px; font-weight: 800;" id="signalText">CALL</div>
         </div>
-
-        <div class="metrics-grid">
-            <div class="metric-box">
-                <div class="metric-label">ENTRY TIME (BD)</div>
-                <div class="metric-value" id="resTime">--:--:--</div>
-            </div>
-            <div class="metric-box">
-                <div class="metric-label">CONFIRMATION</div>
-                <div class="metric-value"><span class="accuracy-badge" id="resScore">0%</span></div>
-            </div>
-            <div class="metric-box">
-                <div class="metric-label">MARKET TREND</div>
-                <div class="metric-value" id="resTrend" style="color: var(--neon-cyan);">--</div>
-            </div>
-            <div class="metric-box">
-                <div class="metric-label">FILTER STATUS</div>
-                <div class="metric-value" id="resStatus" style="font-size: 12px; font-family: 'Space Grotesk', sans-serif; font-weight: 700;">--</div>
-            </div>
-        </div>
-
-        <div class="reason-card" id="resReason">
-            Analysis Summary...
-        </div>
-    </div>
-
-    <div class="footer-note">
-        ⚠️ Strict Filter: Signals auto-pause when confluence is below 75% or Market is Closed.
+        <div class="info-row"><span>Asset:</span><span class="val-highlight" id="resPair">EURUSD</span></div>
+        <div class="info-row"><span>Entry Time (UTC+6):</span><span class="val-highlight" id="resTime">--:--:--</span></div>
+        <div class="info-row"><span>Live Price:</span><span class="val-highlight" id="resPrice">--</span></div>
+        <div class="info-row"><span>RSI Value:</span><span class="val-highlight" id="resRsi">--</span></div>
+        <div class="info-row"><span>Analysis Recommendation:</span><span class="prob-badge" id="resRec">--</span></div>
     </div>
 </div>
-
 <script>
-    if (window.Telegram && window.Telegram.WebApp) {
-        window.Telegram.WebApp.ready();
-        window.Telegram.WebApp.expand();
-    }
-
     async function getSignal() {
         const pair = document.getElementById('pairSelect').value;
         const timeframe = document.getElementById('tfSelect').value;
         const loader = document.getElementById('loader');
-        const resultCard = document.getElementById('resultCard');
-        
+        const resultBox = document.getElementById('resultBox');
         loader.style.display = 'block';
-        resultCard.style.display = 'none';
-        
+        resultBox.style.display = 'none';
         try {
             const response = await fetch('/api/analyze', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ pair, timeframe })
             });
-            
             const data = await response.json();
             loader.style.display = 'none';
-            
+
             if(data.error) {
-                alert('Market Data Error: ' + data.error);
+                alert('Market Error: ' + data.error);
                 return;
             }
-            
-            resultCard.style.display = 'block';
+
+            resultBox.style.display = 'block';
+            document.getElementById('resPair').innerText = data.pair;
             document.getElementById('resTime').innerText = data.entry_time;
-            document.getElementById('resTrend').innerText = data.trend || '--';
-            document.getElementById('resStatus').innerText = data.status;
-            document.getElementById('resScore').innerText = data.confidence + '%';
-            document.getElementById('resReason').innerHTML = '<strong>LOGICAL ANALYSIS SUMMARY:</strong><br>' + data.reason;
-            
-            const signalBox = document.getElementById('signalBox');
+            document.getElementById('resPrice').innerText = data.price;
+            document.getElementById('resRsi').innerText = data.rsi;
+            document.getElementById('resRec').innerText = data.recommendation;
+
+            const banner = document.getElementById('signalBanner');
             const signalText = document.getElementById('signalText');
-            
+
             if (data.direction === 'CALL') {
-                signalBox.className = 'signal-box signal-call';
-                signalText.innerText = '🟢 NEXT CANDLE: CALL (BUY)';
+                banner.className = 'signal-banner call-bg';
+                signalText.innerText = '🟢 NEXT CANDLE: GREEN (CALL)';
             } else if (data.direction === 'PUT') {
-                signalBox.className = 'signal-box signal-put';
-                signalText.innerText = '🔴 NEXT CANDLE: PUT (SELL)';
-            } else if (data.direction === 'CLOSED') {
-                signalBox.className = 'signal-box signal-closed';
-                signalText.innerText = '🔒 MARKET CLOSED';
+                banner.className = 'signal-banner put-bg';
+                signalText.innerText = '🔴 NEXT CANDLE: RED (PUT)';
             } else {
-                signalBox.className = 'signal-box signal-wait';
-                signalText.innerText = '⚠️ NO TRADE / WAIT';
+                banner.className = 'signal-banner wait-bg';
+                signalText.innerText = '⚠️ NO TRADE / NEUTRAL';
             }
         } catch (err) {
-            alert('Server connection error!');
+            alert('Error fetching signal. Try again!');
             loader.style.display = 'none';
         }
     }
 </script>
-
 </body>
-</html>"""
+</html>'''
 
-def perform_4layer_analysis(symbol, timeframe):
+def analyze_live_market(symbol, timeframe):
     try:
-        now_utc = datetime.now(pytz.utc)
-        is_weekend = now_utc.weekday() in [5, 6]  # Saturday = 5, Sunday = 6
-        is_crypto = symbol in ["BTCUSD", "ETHUSD"]
-
-        # 1. Market Closed Check for Forex/Metals on Weekends
-        if is_weekend and not is_crypto:
-            return {
-                "pair": symbol,
-                "timeframe": timeframe,
-                "trend": "CLOSED 🔒",
-                "entry_time": "--:--:--",
-                "direction": "CLOSED",
-                "confidence": 0,
-                "status": "MARKET CLOSED",
-                "reason": "Live Forex/Metal market is closed for the weekend. Signal generation is paused."
-            }
-
         yf_symbol = YF_MAP.get(symbol, f"{symbol}=X")
         tf_map = {"1m": "1m", "5m": "5m", "15m": "15m"}
         interval = tf_map.get(timeframe, "1m")
@@ -510,136 +153,33 @@ def perform_4layer_analysis(symbol, timeframe):
 
         df = yf.download(tickers=yf_symbol, period=period, interval=interval, progress=False)
         
-        if df.empty or len(df) < 50:
-            return {
-                "pair": symbol,
-                "timeframe": timeframe,
-                "trend": "CLOSED 🔒",
-                "entry_time": "--:--:--",
-                "direction": "CLOSED",
-                "confidence": 0,
-                "status": "MARKET CLOSED",
-                "reason": "Live market feed unavailable. Market may be closed or inactive."
-            }
+        if df.empty or len(df) < 15:
+            return {"error": "Unable to fetch live price candles right now."}
 
+        # Safe extraction for single series Close
         if isinstance(df.columns, pd.MultiIndex):
-            df = df.xs(yf_symbol, axis=1, level=1)
-        df = df.dropna()
-
-        # Check for Stale / Outdated Candlestick Data
-        last_candle_time = df.index[-1]
-        if hasattr(last_candle_time, 'tz') and last_candle_time.tz is not None:
-            last_candle_utc = last_candle_time.astimezone(pytz.utc)
+            close_series = df['Close'][yf_symbol]
         else:
-            last_candle_utc = pytz.utc.localize(last_candle_time)
+            close_series = df['Close']
 
-        if (now_utc - last_candle_utc) > timedelta(minutes=30) and not is_crypto:
-            return {
-                "pair": symbol,
-                "timeframe": timeframe,
-                "trend": "CLOSED 🔒",
-                "entry_time": "--:--:--",
-                "direction": "CLOSED",
-                "confidence": 0,
-                "status": "MARKET CLOSED",
-                "reason": "Real market is currently closed or halted. Trades auto-paused."
-            }
+        close_series = close_series.dropna()
 
-        # --- 4-LAYER INDICATOR LOGIC ---
-        
-        # Layer 1: EMA 20/50 Tracker & Trend Identification
-        ema20 = EMAIndicator(close=df['Close'], window=20).ema_indicator().iloc[-1]
-        ema50 = EMAIndicator(close=df['Close'], window=50).ema_indicator().iloc[-1]
-        
-        if ema20 > ema50:
-            market_trend = "UPTREND 🟢"
-        elif ema20 < ema50:
-            market_trend = "DOWNTREND 🔴"
-        else:
-            market_trend = "SIDEWAYS 🟡"
+        rsi = RSIIndicator(close=close_series, window=14).rsi()
+        ema = EMAIndicator(close=close_series, window=20).ema_indicator()
 
-        # Layer 2: Swing High / Swing Low (50 candles) Support & Resistance
-        recent_high = float(df['High'].iloc[-50:-1].max())
-        recent_low = float(df['Low'].iloc[-50:-1].min())
-        curr_close = float(df['Close'].iloc[-1])
-        curr_open = float(df['Open'].iloc[-1])
-        curr_high = float(df['High'].iloc[-1])
-        curr_low = float(df['Low'].iloc[-1])
-        
-        prev_open = float(df['Open'].iloc[-2])
-        prev_close = float(df['Close'].iloc[-2])
+        latest_close = float(close_series.iloc[-1])
+        latest_rsi = round(float(rsi.iloc[-1]), 2)
+        latest_ema = float(ema.iloc[-1])
 
-        near_support = abs(curr_close - recent_low) / recent_low < 0.002
-        near_resistance = abs(curr_close - recent_high) / recent_high < 0.002
-
-        # Layer 3: Candlestick Pattern Detector
-        body_size = abs(curr_close - curr_open)
-        upper_wick = curr_high - max(curr_open, curr_close)
-        lower_wick = min(curr_open, curr_close) - curr_low
-
-        is_bull_engulfing = (curr_close > curr_open) and (prev_close < prev_open) and (curr_close > prev_open)
-        is_bear_engulfing = (curr_close < curr_open) and (prev_close > prev_open) and (curr_close < prev_open)
-        is_hammer = (lower_wick > 2 * body_size) and (upper_wick < body_size)
-        is_star = (upper_wick > 2 * body_size) and (lower_wick < body_size)
-
-        # Layer 4: RSI + Bollinger Bands
-        rsi = RSIIndicator(close=df['Close'], window=14).rsi().iloc[-1]
-        bb = BollingerBands(close=df['Close'], window=20, window_dev=2)
-        bb_lower = bb.bollinger_lband().iloc[-1]
-        bb_upper = bb.bollinger_hband().iloc[-1]
-
-        call_score = 0
-        put_score = 0
-        reasons = []
-
-        # Layer 1 Scoring (25%)
-        if ema20 > ema50:
-            call_score += 25
-            reasons.append("Uptrend confirmed via EMA 20/50")
-        else:
-            put_score += 25
-            reasons.append("Downtrend confirmed via EMA 20/50")
-
-        # Layer 2 Scoring (25%)
-        if near_support:
-            call_score += 25
-            reasons.append("Price rejected from Support Zone")
-        if near_resistance:
-            put_score += 25
-            reasons.append("Price rejected from Resistance Zone")
-
-        # Layer 3 Scoring (25%)
-        if is_bull_engulfing or is_hammer:
-            call_score += 25
-            reasons.append("Bullish Reversal Pattern Formed")
-        if is_bear_engulfing or is_star:
-            put_score += 25
-            reasons.append("Bearish Reversal Pattern Formed")
-
-        # Layer 4 Scoring (25%)
-        if rsi < 38 or curr_close <= bb_lower:
-            call_score += 25
-            reasons.append("RSI Oversold / Lower BB Touch")
-        if rsi > 62 or curr_close >= bb_upper:
-            put_score += 25
-            reasons.append("RSI Overbought / Upper BB Touch")
-
-        # Confluence Filter Rule (75%)
-        if call_score >= 75 and call_score > put_score:
+        if latest_rsi < 35 or (latest_close > latest_ema and latest_rsi < 55):
             direction = "CALL"
-            confidence = min(call_score + 10, 96)
-            status = "PASSED (75%+)"
-            final_reason = " • ".join(reasons)
-        elif put_score >= 75 and put_score > call_score:
+            rec = "STRONG BUY"
+        elif latest_rsi > 65 or (latest_close < latest_ema and latest_rsi > 45):
             direction = "PUT"
-            confidence = min(put_score + 10, 96)
-            status = "PASSED (75%+)"
-            final_reason = " • ".join(reasons)
+            rec = "STRONG SELL"
         else:
             direction = "WAIT"
-            confidence = max(call_score, put_score)
-            status = "FILTERED (<75%)"
-            final_reason = "75% confluence not met across 4-layer logic. Trade paused."
+            rec = "NEUTRAL"
 
         bd_tz = pytz.timezone('Asia/Dhaka')
         now = datetime.now(bd_tz)
@@ -649,12 +189,11 @@ def perform_4layer_analysis(symbol, timeframe):
         return {
             "pair": symbol,
             "timeframe": timeframe,
-            "trend": market_trend,
+            "price": round(latest_close, 5),
             "entry_time": next_candle_time.strftime("%H:%M:%S"),
             "direction": direction,
-            "confidence": confidence,
-            "status": status,
-            "reason": final_reason
+            "recommendation": rec,
+            "rsi": latest_rsi
         }
     except Exception as e:
         return {"error": str(e)}
@@ -668,7 +207,7 @@ def analyze():
     data = request.get_json(silent=True) or {}
     pair = data.get('pair', 'EURUSD')
     timeframe = data.get('timeframe', '1m')
-    result = perform_4layer_analysis(pair, timeframe)
+    result = analyze_live_market(pair, timeframe)
     return jsonify(result)
 
 if __name__ == '__main__':
